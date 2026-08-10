@@ -11,14 +11,57 @@ documentation may be updated during internal and peer review.
 
 ## Workflow
 
-| Step                 | Description                                                                                                             |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Segmentation         | Segment myofibres and nuclei from Xenium morphology images using Cellpose-SAM.                                          |
-| Preprocessing        | Assign transcripts to labelled masks, calculate object-level measurements and apply transcript-density quality control. |
-| Clustering           | Compare Leiden, GraphST, SpaGCN and BANKSY for fibre-level clustering.                                                  |
-| Annotation           | Annotate myofibre types using canonical *Myh* markers and nuclear populations using curated markers and decoupler.      |
-| SVG detection        | Detect spatially variable genes using eight complementary methods.                                                      |
-| Subcellular analysis | Explore subcellular transcript localization using Bento.                                                                |
+| Step | Description | Documentation |
+| --- | --- | --- |
+| Segmentation | Segment myofibres and nuclei from Xenium morphology images using Cellpose-SAM. | [Segmentation README](Pipeline/0_segmentation/README.md) |
+| Preprocessing | Assign transcripts to labelled masks, calculate object-level measurements and apply transcript-density quality control. | [Preprocessing README](Pipeline/1_preprocessing/README.md) |
+| Clustering | Run the included Leiden workflow; GraphST, SpaGCN and BANKSY are documented as external methods. | [Clustering README](Pipeline/2_clustering/README.md) |
+| Annotation | Annotate myofibre types using canonical *Myh* markers and nuclear populations using curated markers and decoupler. | [Annotation README](Pipeline/3_annotation/README.md) |
+| SVG detection | Detect spatially variable genes using eight complementary methods. | [SVG README](Pipeline/4_SVG/README.md) |
+| Subcellular analysis | Explore subcellular transcript localization using Bento. | [Bento notebook](Pipeline/5_subcellular_analysis/run_bento.ipynb) |
+| Benchmarking | Evaluate segmentation, preprocessing, annotation and SVG-detection performance. | [Benchmarking README](Benchmarking/README.md) |
+
+## Installation
+
+The repository is organized as a sequence of independent stages. Each stage
+must be run separately after updating the paths and settings in its scripts;
+there is no single command that executes the complete workflow. Outputs from
+one stage serve as inputs to the next stage.
+
+Several SVG packages have incompatible dependency requirements. We therefore
+recommend creating a separate conda environment for each major stage and for
+each SVG method. Stage-specific requirements are provided in the corresponding
+directories.
+
+For example, create the preprocessing environment from the repository root:
+
+```bash
+conda create -n myofiber-preprocessing python=3.10
+conda activate myofiber-preprocessing
+python -m pip install -r Pipeline/1_preprocessing/requirements.txt
+```
+
+The provided Leiden clustering and myofibre-annotation scripts can use this
+same core environment. Nuclear integration and decoupler annotation use:
+
+```bash
+conda create -n myofiber-annotation python=3.10
+conda activate myofiber-annotation
+python -m pip install -r Pipeline/3_annotation/requirements.txt
+```
+
+For SVG methods, use the method-specific files under
+`Pipeline/4_SVG/requirements/`. For example:
+
+```bash
+conda create -n myofiber-morans python=3.10
+conda activate myofiber-morans
+python -m pip install -r Pipeline/4_SVG/requirements/morans.txt
+```
+
+The comments at the top of each requirements file state the Python version
+used for that analysis. GPU-enabled PyTorch should be installed according to
+the user's hardware and the official PyTorch instructions.
 
 
 ## Input data
@@ -53,7 +96,7 @@ segmentation → preprocessing → clustering → annotation → SVG detection
 ```
 
 The subcellular Bento analysis is an independent exploratory analysis. See the
-README within each pipeline folder for the exact commands and parameters.
+linked documentation for the exact commands and parameters.
 
 ### 1. Segmentation
 
@@ -63,7 +106,8 @@ images. The same workflow can be configured for myofibres or nuclei.
 
 ### 2. Preprocessing
 
-`Pipeline/1_preprocessing/preprocessing.py` assigns transcripts to mask labels,
+[`Pipeline/1_preprocessing/preprocessing.py`](Pipeline/1_preprocessing/preprocessing.py)
+assigns transcripts to mask labels,
 constructs object-by-gene count matrices and stores object area and centroid
 coordinates. Objects between the sample-specific 5th and 95th percentiles of
 transcript density are retained, and genes detected in fewer than five objects
@@ -75,9 +119,10 @@ used to calculate highly variable genes, PCA, a neighbourhood graph and UMAP.
 ### 3. Clustering
 
 Leiden, GraphST, SpaGCN and BANKSY were evaluated for fibre-level clustering.
-GraphST, SpaGCN and BANKSY are external methods and should be installed and
-cited from their original repositories. Study-specific settings are documented
-in `Pipeline/2_clustering/README.md`.
+The executable Leiden workflow is included. GraphST, SpaGCN and BANKSY are
+external methods and should be installed and cited from their original
+repositories. Study-specific settings and source links are documented in the
+[clustering README](Pipeline/2_clustering/README.md).
 
 ### 4. Annotation
 
@@ -106,12 +151,14 @@ save both the selected SVGs and a complete gene-level table containing an
 ### 6. Subcellular analysis
 
 Bento was used for an exploratory proof-of-concept analysis of subcellular
-transcript localization. Bento is an external package and should be installed
-and cited from its original repository.
+transcript localization. The study notebook is included, while Bento itself
+should be installed and cited from its
+[original repository](https://github.com/ckmah/bento-tools).
 
 ## Benchmarking
 
-The `Benchmarking/` directory contains study-specific evaluation scripts for:
+The [`Benchmarking/`](Benchmarking/README.md) directory contains
+study-specific evaluation scripts for:
 
 - segmentation performance and transcript-assignment error;
 - comparison of count- and density-based preprocessing filters;
@@ -121,5 +168,4 @@ The `Benchmarking/` directory contains study-specific evaluation scripts for:
 The clustering evaluation and synthetic SVG-data generation are described in
 the manuscript but are not provided as self-contained workflows in the current
 repository version.
-
 
