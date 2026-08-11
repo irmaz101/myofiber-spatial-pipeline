@@ -1,0 +1,15 @@
+# Tested with Python 3.10.
+# This core environment is also used by the provided Leiden clustering and
+# myofibre-annotation workflows.
+
+anndata==0.11.4
+h5py==3.16.0
+leidenalg==0.10.1
+matplotlib==3.10.9
+numpy==2.2.6
+pandas==2.3.3
+scanpy==1.11.5
+scikit-learn==1.7.2
+scikit-misc==0.2.0
+scipy==1.15.3
+tifffile==2025.5.10

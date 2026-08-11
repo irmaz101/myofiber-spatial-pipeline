@@ -8,6 +8,20 @@ The paths and main parameters are defined in the **Settings** section at the
 top of each script. Update these values before running a script. Commands below
 assume they are run from the repository root.
 
+## Installation
+
+The benchmarking scripts reuse the core analysis dependencies:
+
+```bash
+conda create -n myofiber-benchmarking python=3.10
+conda activate myofiber-benchmarking
+python -m pip install -r Benchmarking/requirements.txt
+```
+
+The synthetic-data notebook additionally uses R with `scDesign3`,
+`SingleCellExperiment` and `reticulate`. These R dependencies are not installed
+by the Python requirements file.
+
 ## Contents
 
 | Folder | Purpose | Main outputs |
@@ -33,8 +47,6 @@ The following metrics are calculated:
 - precision, recall, and F1 at the selected IoU threshold;
 - oversegmentation and undersegmentation rates;
 - absolute and relative error in the number of assigned transcripts.
-
-.
 
 ## 1. Preprocessing benchmark
 
@@ -70,11 +82,9 @@ The SVG benchmark contains two complementary analyses:
 | `0_summarize_svg_counts.py` | Count SVGs detected by each method in experimental samples |
 | `1_calculate_svg_method_overlap.py` | Calculate pairwise overlap between methods |
 | `2_benchmark_svg_technical_replicates.py` | Compare SVG sets between technical replicates |
-| `3_synthetic_dataset.ipynb` | Generate synthetic count matrices with scDesign3 |
+| `3_synthetic_datasets.ipynb` | Generate synthetic count matrices with scDesign3 |
 | `4_compute_correlation.ipynb` | Calculate Kendall correlation with simulated spatial-signal strength |
 | `5_compute_aupr.ipynb` | Calculate area under the precision-recall curve (AUPRC) |
 | `6_bootstrap_svg_benchmark.py` | Bootstrap method rankings across synthetic datasets |
-
-
 
 

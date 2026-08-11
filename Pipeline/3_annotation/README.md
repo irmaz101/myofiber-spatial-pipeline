@@ -13,33 +13,25 @@ Myofibres and nuclei are analysed separately:
 | --------------------------------- | ---------------------------------------------------------------------------------------- |
 | `0_fibre_annotation.py`             | Annotates myofibre types using canonical *Myh* marker expression and k-means clustering. |
 | `1_integrate_nuclei_bbknn.py`       | Integrates sample-level nuclear datasets using BBKNN and performs Leiden clustering.     |
-| `2_annotate_nuclear_populations.py` | Assigns manually curated biological labels to nuclear Leiden clusters.                   |
-| `3_annotate_nuclei_decoupler.py`    | Performs an independent marker-based nuclear annotation using decoupler and PanglaoDB.   |
+| `3_annotate_nuclear_populations.py` | Assigns manually curated biological labels to nuclear Leiden clusters.                   |
+| `4_annotate_nuclei_decoupler.py`    | Performs an independent marker-based nuclear annotation using decoupler and PanglaoDB.   |
 
-## Requirements
+## Installation
 
-The main required packages are:
-
-* AnnData
-* BBKNN
-* decoupler
-* matplotlib
-* NumPy
-* pandas
-* Scanpy
-* scikit-learn
-
-Install the core dependencies from the repository root:
+The myofibre annotation script can use the core preprocessing environment.
+For the complete nuclear workflow, create the annotation environment:
 
 ```bash
-python -m pip install -r requirements.txt
+conda create -n myofiber-annotation python=3.10
+conda activate myofiber-annotation
+python -m pip install -r Pipeline/3_annotation/requirements.txt
 ```
 
 ## Myofibre-type annotation
 
 ### Input
 
-`fibre_annotation.py` expects sample-level AnnData files produced by the preprocessing pipeline:
+`0_fibre_annotation.py` expects sample-level AnnData files produced by the preprocessing pipeline:
 
 ```text
 anndata_mf_density/
@@ -184,7 +176,7 @@ An independent marker-based annotation is performed using decoupler and canonica
 Run:
 
 ```bash
-python Pipeline/3_annotation/annotate_nuclei_decoupler.py
+python Pipeline/3_annotation/4_annotate_nuclei_decoupler.py
 ```
 
 The script:
@@ -229,6 +221,5 @@ adata.obs["decoupler_label"]
 ```
 
 Decoupler predictions are used as supporting evidence for the manually curated annotations rather than as an independent ground truth.
-
 
 

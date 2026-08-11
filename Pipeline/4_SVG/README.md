@@ -36,7 +36,26 @@ An optional `--all-output` CSV can also be saved. It contains every gene
 returned by the method and an `is_svg` column indicating whether the gene met
 the selection rule.
 
-## Usage
+## Installation
+
+The methods have incompatible dependency requirements and should be installed
+in separate conda environments. Requirements files and tested Python versions
+are available under `Pipeline/4_SVG/requirements/`.
+
+For example:
+
+```bash
+conda create -n myofiber-morans python=3.10
+conda activate myofiber-morans
+python -m pip install -r Pipeline/4_SVG/requirements/morans.txt
+```
+
+Replace `morans` with the required method and use the Python version stated
+at the top of that requirements file. scGCO and SMASH additionally require
+local source checkouts supplied through `--source`; obtain these from their
+linked original repositories.
+
+## Running a method
 
 All scripts use the same input and output arguments. For example:
 
@@ -93,6 +112,6 @@ can be supplied with `--source`.
 - [SpaGFT](https://github.com/jxLiu-bio/SpaGFT)
 - [SVGbit](https://github.com/CPenglab/svgbit)
 
-Some packages have incompatible dependency requirements. Separate environments
-may therefore be needed. Record the version or Git commit used for each final
-analysis and cite the corresponding method publication.
+The method-specific requirements files record the tested package versions.
+The original method publications and software repositories should also be
+cited.

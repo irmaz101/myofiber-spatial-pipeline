@@ -10,19 +10,18 @@ The same workflow can be applied to myofibres and nuclei by changing the input m
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `preprocessing.py` | Assigns transcripts to segmentation masks, constructs object-by-gene count matrices, performs quality control, normalizes expression, and saves processed AnnData objects. |
 
-## Requirements
+## Installation
 
-The main required packages are:
+Create and activate the core analysis environment from the repository root:
 
-* AnnData
-* NumPy
-* pandas
-* Scanpy
-* SciPy
-* tifffile
-
-
+```bash
+conda create -n myofiber-core python=3.10
+conda activate myofiber-core
+python -m pip install -r Pipeline/1_preprocessing/requirements.txt
 ```
+
+The same environment can be used for the provided Leiden clustering and
+myofibre-type annotation scripts.
 
 ## Input files
 
@@ -235,4 +234,3 @@ anndata_mf_density/
 The `.h5ad` file contains the processed expression matrix, spatial coordinates, object-level metadata, raw counts, normalized expression, PCA representation, neighbourhood graph, and UMAP coordinates.
 
 The filtering-comparison CSV contains object-level measurements and the decisions produced by the count- and density-based QC strategies.
-
