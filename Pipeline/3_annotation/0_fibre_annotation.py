@@ -1,14 +1,12 @@
 """
 Annotate skeletal muscle fibre types using canonical Myh markers.
 
-For each sample, fibres are clustered using z-scaled expression of
-Myh1, Myh2, Myh4, and Myh7. Cluster identities are assigned manually
-after inspection of a marker-expression dotplot.
+The script expects normalized and log-transformed expression values
+in adata.X.
 """
 
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scanpy as sc
@@ -16,31 +14,27 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
 
-# --------------------------------------------------
-# Settings
-# --------------------------------------------------
+ANNDATA_DIR = Path("anndata")
+RESULTS_DIR = Path("annotated_anndata")
 
-anndata_dir = Path("anndata")
-results_dir = Path("results")
+N_CLUSTERS = 4
+RANDOM_STATE = 0
+N_INIT = 50
 
-n_clusters = 4
-random_state = 0
-n_init = 50
-
-markers = {
+MARKERS = {
     "type_1": ["Myh7"],
     "type_2a": ["Myh2"],
     "type_2x": ["Myh1"],
     "type_2b": ["Myh4"],
 }
 
-marker_genes = [
+MARKER_GENES = [
     gene
-    for genes in markers.values()
+    for genes in MARKERS.values()
     for gene in genes
 ]
 
-valid_labels = {
+VALID_LABELS = {
     "type_1",
     "type_2a",
     "type_2x",
@@ -48,105 +42,130 @@ valid_labels = {
     "other",
 }
 
-results_dir.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# --------------------------------------------------
-# Helper functions
-# --------------------------------------------------
-
-def extract_marker_expression(adata, genes):
-    """Extract marker expression using case-insensitive gene matching."""
-
-    if adata.raw is not None:
-        gene_names = pd.Index(adata.raw.var_names)
-        source = adata.raw
-    else:
-        gene_names = pd.Index(adata.var_names)
-        source = adata
-
-    lowercase_names = {
+def extract_marker_expression(adata):
+    """Extract marker expression from adata.X."""
+    gene_lookup = {
         gene.lower(): gene
-        for gene in gene_names
+        for gene in adata.var_names
     }
-
-    expression = np.zeros(
-        (adata.n_obs, len(genes)),
-        dtype=float,
-    )
-
-    found_genes = {}
-
-    for column, requested_gene in enumerate(genes):
-        actual_gene = lowercase_names.get(
-            requested_gene.lower()
-        )
-
-        if actual_gene is None:
-            continue
-
-        values = source[:, actual_gene].X
-
-        if hasattr(values, "toarray"):
-            values = values.toarray()
-
-        expression[:, column] = np.asarray(values).ravel()
-        found_genes[requested_gene] = actual_gene
-
-    if not found_genes:
-        raise ValueError(
-            "None of the requested Myh markers were found."
-        )
 
     missing_genes = [
         gene
-        for gene in genes
-        if gene not in found_genes
+        for gene in MARKER_GENES
+        if gene.lower() not in gene_lookup
     ]
 
     if missing_genes:
-        print(f"Missing markers: {missing_genes}")
+        raise ValueError(
+            f"Missing Myh markers: {missing_genes}"
+        )
 
-    return expression
+    actual_genes = [
+        gene_lookup[gene.lower()]
+        for gene in MARKER_GENES
+    ]
+
+    expression = adata[:, actual_genes].X
+
+    if hasattr(expression, "toarray"):
+        expression = expression.toarray()
+
+    return np.asarray(expression), actual_genes
 
 
-def request_cluster_labels(cluster_ids):
-    """Ask the user to assign a fibre type to each k-means cluster."""
-
-    cluster_mapping = {}
-
+def request_cluster_mapping(cluster_ids):
+    """Request a fibre-type label for each cluster."""
     print(
         "\nAllowed labels: "
-        "type_1, type_2a, type_2x, type_2b, other"
+        + ", ".join(sorted(VALID_LABELS))
     )
+
+    cluster_mapping = {}
 
     for cluster_id in cluster_ids:
         while True:
             fibre_type = input(
                 f"Cluster {cluster_id} fibre type: "
-            ).strip().lower()
+            ).strip()
 
-            if fibre_type in valid_labels:
-                cluster_mapping[str(cluster_id)] = fibre_type
+            if fibre_type in VALID_LABELS:
+                cluster_mapping[cluster_id] = fibre_type
                 break
 
-            print("Invalid label. Please try again.")
+            print("Invalid label.")
+
+    return cluster_mapping
+
+
+def load_or_create_mapping(mapping_path, cluster_ids):
+    """Load an existing mapping or request labels interactively."""
+    if mapping_path.exists():
+        mapping = pd.read_csv(
+            mapping_path,
+            dtype={"myh_cluster": str},
+        )
+
+        required_columns = {
+            "myh_cluster",
+            "fiber_type_from_myh",
+        }
+
+        if not required_columns.issubset(mapping.columns):
+            raise ValueError(
+                f"Invalid mapping file: {mapping_path}"
+            )
+
+        cluster_mapping = dict(
+            zip(
+                mapping["myh_cluster"],
+                mapping["fiber_type_from_myh"],
+            )
+        )
+
+        unexpected_labels = (
+            set(cluster_mapping.values())
+            - VALID_LABELS
+        )
+
+        if unexpected_labels:
+            raise ValueError(
+                f"Unexpected labels in {mapping_path}: "
+                f"{sorted(unexpected_labels)}"
+            )
+
+        if set(cluster_mapping) != set(cluster_ids):
+            raise ValueError(
+                f"Cluster IDs in {mapping_path} do not "
+                f"match the current clustering."
+            )
+
+        return cluster_mapping
+
+    cluster_mapping = request_cluster_mapping(
+        cluster_ids
+    )
+
+    pd.DataFrame(
+        cluster_mapping.items(),
+        columns=[
+            "myh_cluster",
+            "fiber_type_from_myh",
+        ],
+    ).to_csv(mapping_path, index=False)
 
     return cluster_mapping
 
 
 def annotate_sample(h5ad_path):
-    """Cluster and manually annotate one myofibre dataset."""
-
+    """Cluster and annotate one myofibre dataset."""
     sample = h5ad_path.stem
-
-    print(f"\nProcessing {sample}")
-
     adata = sc.read_h5ad(h5ad_path)
 
-    marker_expression = extract_marker_expression(
-        adata,
-        marker_genes,
+    marker_expression, actual_genes = (
+        extract_marker_expression(adata)
     )
 
     scaled_expression = StandardScaler().fit_transform(
@@ -154,33 +173,38 @@ def annotate_sample(h5ad_path):
     )
 
     kmeans = KMeans(
-        n_clusters=n_clusters,
-        random_state=random_state,
-        n_init=n_init,
+        n_clusters=N_CLUSTERS,
+        random_state=RANDOM_STATE,
+        n_init=N_INIT,
     )
+
+    cluster_ids = kmeans.fit_predict(
+        scaled_expression
+    ).astype(str)
 
     adata.obs["myh_cluster"] = pd.Categorical(
-        kmeans.fit_predict(scaled_expression).astype(str)
+        cluster_ids
     )
 
-    # Display marker profiles before manual annotation.
-    sc.pl.dotplot(
+    dotplot_path = (
+        RESULTS_DIR
+        / f"{sample}_myh_dotplot.png"
+    )
+
+    dotplot = sc.pl.dotplot(
         adata,
-        var_names=markers,
+        var_names=actual_genes,
         groupby="myh_cluster",
         standard_scale="var",
+        return_fig=True,
         show=False,
     )
 
-    dotplot_path = results_dir / f"{sample}_myh_dotplot.png"
-
-    plt.savefig(
+    dotplot.savefig(
         dotplot_path,
         dpi=300,
         bbox_inches="tight",
     )
-    plt.show()
-    plt.close()
 
     cluster_ids = sorted(
         adata.obs["myh_cluster"]
@@ -188,80 +212,54 @@ def annotate_sample(h5ad_path):
         .unique()
     )
 
-    cluster_mapping = request_cluster_labels(
-        cluster_ids
+    mapping_path = (
+        RESULTS_DIR
+        / f"{sample}_cluster_mapping.csv"
     )
 
-    adata.obs["fiber_type"] = (
+    cluster_mapping = load_or_create_mapping(
+        mapping_path,
+        cluster_ids,
+    )
+
+    adata.obs["fiber_type_from_myh"] = (
         adata.obs["myh_cluster"]
         .astype(str)
         .map(cluster_mapping)
-        .fillna("other")
         .astype("category")
     )
 
     adata.obsm["X_myh_scaled"] = scaled_expression
 
-    mapping_path = (
-        results_dir /
-        f"{sample}_cluster_mapping.csv"
-    )
-
-    pd.DataFrame(
-        cluster_mapping.items(),
-        columns=["myh_cluster", "fiber_type"],
-    ).to_csv(mapping_path, index=False)
-
     output_path = (
-        results_dir /
-        f"{sample}_fiber_annotated.h5ad"
+        RESULTS_DIR
+        / f"{sample}_with_myh_fiber_types.h5ad"
     )
 
     adata.write_h5ad(output_path)
 
-    print("\nFibre-type counts:")
-    print(adata.obs["fiber_type"].value_counts())
-    print(f"Saved dotplot: {dotplot_path}")
-    print(f"Saved mapping: {mapping_path}")
-    print(f"Saved AnnData: {output_path}")
+    print(f"\n{sample}")
+    print(
+        adata.obs[
+            "fiber_type_from_myh"
+        ].value_counts()
+    )
+    print(f"Saved: {output_path}")
 
-
-# --------------------------------------------------
-# Main analysis
-# --------------------------------------------------
 
 def main():
-    """Annotate all AnnData files in the input directory."""
-
-    h5ad_files = sorted(anndata_dir.glob("*.h5ad"))
+    h5ad_files = sorted(
+        ANNDATA_DIR.glob("*.h5ad")
+    )
 
     if not h5ad_files:
         raise FileNotFoundError(
-            f"No AnnData files were found in "
-            f"{anndata_dir.resolve()}."
+            f"No AnnData files found in "
+            f"{ANNDATA_DIR.resolve()}."
         )
 
     for h5ad_path in h5ad_files:
-        output_path = (
-            results_dir /
-            f"{h5ad_path.stem}_fiber_annotated.h5ad"
-        )
-
-        if output_path.exists():
-            print(
-                f"Skipping {h5ad_path.stem}: "
-                "annotated output already exists."
-            )
-            continue
-
-        try:
-            annotate_sample(h5ad_path)
-
-        except Exception as error:
-            print(
-                f"Annotation failed for "
-                f"{h5ad_path.stem}: {error}"
-            )
+        annotate_sample(h5ad_path)
 
 
 if __name__ == "__main__":
