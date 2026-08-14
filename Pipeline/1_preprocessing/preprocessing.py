@@ -1,9 +1,11 @@
 """
-Assign transcripts to segmented objects, compare count- and density-based
-QC filters, apply transcript-density filtering, and preprocess each sample.
+Assign transcripts to segmented objects and preprocess each sample.
+
+Transcript coordinates must already be expressed in mask pixel
+coordinates. Only genes listed in genes.txt are retained.
 """
 
-import os
+from pathlib import Path
 
 import anndata as ad
 import numpy as np
@@ -14,38 +16,69 @@ import tifffile
 from scipy import ndimage
 
 
-def get_file_pairs(transcript_dir="transcripts", mask_dir="masks_mf"):
-    """Match transcript CSV files and mask TIFF files by sample name."""
+TRANSCRIPT_DIR = Path("transcripts")
+MASK_DIR = Path("masks_mf")
+GENE_FILE = Path("genes.txt")
+OUTPUT_DIR = Path("anndata_mf_density")
 
+DENSITY_PERCENTILES = (5, 95)
+MIN_CELLS_PER_GENE = 5
+N_HVGS = 1000
+RANDOM_STATE = 0
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_genes():
+    """Load genes retained for downstream analysis."""
+    if not GENE_FILE.exists():
+        raise FileNotFoundError(
+            f"Gene list not found: {GENE_FILE}"
+        )
+
+    genes = set(
+        pd.read_csv(
+            GENE_FILE,
+            header=None,
+        )[0]
+        .dropna()
+        .astype(str)
+    )
+
+    if not genes:
+        raise ValueError(
+            f"No genes found in {GENE_FILE}."
+        )
+
+    return genes
+
+
+def get_file_pairs():
+    """Match transcript CSV and mask TIFF files by sample name."""
     pairs = []
 
-    for csv_file in sorted(os.listdir(transcript_dir)):
-        if not csv_file.endswith(".csv"):
-            continue
+    for csv_path in sorted(
+        TRANSCRIPT_DIR.glob("*.csv")
+    ):
+        mask_path = MASK_DIR / f"{csv_path.stem}.tif"
 
-        sample = os.path.splitext(csv_file)[0]
-        mask_path = os.path.join(mask_dir, f"{sample}.tif")
-
-        if os.path.exists(mask_path):
-            pairs.append(
-                (
-                    os.path.join(transcript_dir, csv_file),
-                    mask_path,
-                )
-            )
+        if mask_path.exists():
+            pairs.append((csv_path, mask_path))
         else:
-            print(f"WARNING: No matching mask found for {csv_file}")
+            print(
+                f"Warning: no mask found for "
+                f"{csv_path.name}"
+            )
 
     return pairs
 
 
-def preprocess_sample(
+def load_and_assign_transcripts(
     csv_path,
     mask_path,
-    output_dir="anndata_mf_density",
+    keep_genes,
 ):
-    """Create and preprocess one AnnData object."""
-
+    """Assign filtered transcripts to mask objects."""
     transcripts = pd.read_csv(csv_path)
     mask = tifffile.imread(mask_path)
 
@@ -61,36 +94,58 @@ def preprocess_sample(
 
     if missing_columns:
         raise ValueError(
-            f"{csv_path} is missing columns: "
+            f"{csv_path.name} is missing columns: "
             f"{sorted(missing_columns)}"
         )
 
     if mask.ndim != 2:
         raise ValueError(
-            f"Expected a 2D mask, found shape {mask.shape}"
+            f"Expected a 2D mask for {mask_path.name}, "
+            f"found shape {mask.shape}."
         )
 
-    # Convert transcript coordinates to integer indices.
-    transcripts["x_location_int"] = (
-        transcripts["x_location"].astype(int)
+    transcripts = transcripts[
+        transcripts["feature_name"].astype(str).isin(
+            keep_genes
+        )
+    ].copy()
+
+    transcripts["x_location"] = pd.to_numeric(
+        transcripts["x_location"],
+        errors="coerce",
     )
-    transcripts["y_location_int"] = (
-        transcripts["y_location"].astype(int)
+
+    transcripts["y_location"] = pd.to_numeric(
+        transcripts["y_location"],
+        errors="coerce",
     )
 
     height, width = mask.shape
 
-    in_bounds = (
-        transcripts["x_location_int"].between(0, width - 1)
-        & transcripts["y_location_int"].between(0, height - 1)
+    valid_coordinates = (
+        np.isfinite(transcripts["x_location"])
+        & np.isfinite(transcripts["y_location"])
+        & transcripts["x_location"].ge(0)
+        & transcripts["x_location"].lt(width)
+        & transcripts["y_location"].ge(0)
+        & transcripts["y_location"].lt(height)
     )
 
-    transcripts = transcripts.loc[in_bounds].copy()
+    transcripts = transcripts.loc[
+        valid_coordinates
+    ].copy()
 
-    # Assign transcripts to mask objects.
+    transcripts["x_int"] = np.floor(
+        transcripts["x_location"]
+    ).astype(int)
+
+    transcripts["y_int"] = np.floor(
+        transcripts["y_location"]
+    ).astype(int)
+
     transcripts["cell_id"] = mask[
-        transcripts["y_location_int"].to_numpy(),
-        transcripts["x_location_int"].to_numpy(),
+        transcripts["y_int"].to_numpy(),
+        transcripts["x_int"].to_numpy(),
     ]
 
     transcripts = transcripts[
@@ -99,10 +154,15 @@ def preprocess_sample(
 
     if transcripts.empty:
         raise ValueError(
-            f"No transcripts were assigned to objects for {csv_path}"
+            f"No transcripts were assigned for "
+            f"{csv_path.name}."
         )
 
-    # Create object-by-gene count matrix.
+    return transcripts, mask
+
+
+def create_anndata(transcripts, mask):
+    """Create an object-by-gene count matrix."""
     counts = pd.crosstab(
         transcripts["cell_id"],
         transcripts["feature_name"],
@@ -110,7 +170,6 @@ def preprocess_sample(
 
     counts.index = counts.index.astype(str)
 
-    # Calculate object centroids and areas.
     cell_ids = np.unique(mask)
     cell_ids = cell_ids[cell_ids != 0]
 
@@ -120,22 +179,23 @@ def preprocess_sample(
         index=cell_ids,
     )
 
-    areas = np.bincount(mask.ravel())[cell_ids]
+    areas = np.bincount(
+        mask.ravel().astype(np.int64)
+    )[cell_ids]
 
-    obs = pd.DataFrame(
-        {
-            "cell_id": cell_ids.astype(str),
-            "y_centroid": [
-                centroid[0] for centroid in centroids
-            ],
-            "x_centroid": [
-                centroid[1] for centroid in centroids
-            ],
-            "cell_area": areas,
-        }
-    ).set_index("cell_id")
+    obs = pd.DataFrame({
+        "cell_id": cell_ids.astype(str),
+        "y_centroid": [
+            centroid[0]
+            for centroid in centroids
+        ],
+        "x_centroid": [
+            centroid[1]
+            for centroid in centroids
+        ],
+        "cell_area": areas,
+    }).set_index("cell_id")
 
-    # Retain only objects containing assigned transcripts.
     obs = obs.loc[counts.index]
 
     adata = ad.AnnData(
@@ -145,12 +205,16 @@ def preprocess_sample(
 
     adata.var_names = counts.columns.astype(str)
 
-    # Preserve the coordinate convention used in the analysis.
+    # Napari-compatible row-column convention: [y, x].
     adata.obsm["spatial"] = obs[
         ["y_centroid", "x_centroid"]
     ].to_numpy()
 
-    # Calculate QC metrics.
+    return adata
+
+
+def apply_qc(adata):
+    """Apply transcript-density and gene-detection filters."""
     sc.pp.calculate_qc_metrics(
         adata,
         inplace=True,
@@ -162,99 +226,49 @@ def preprocess_sample(
         / adata.obs["cell_area"]
     )
 
-    # Compare count- and density-based QC filters.
-    count_low, count_high = np.percentile(
-        adata.obs["total_counts"],
-        [5, 95],
-    )
-
-    density_low, density_high = np.percentile(
+    low, high = np.percentile(
         adata.obs["transcript_density"],
-        [5, 95],
+        DENSITY_PERCENTILES,
     )
 
-    keep_count = adata.obs["total_counts"].between(
-        count_low,
-        count_high,
+    keep = adata.obs["transcript_density"].between(
+        low,
+        high,
     )
 
-    keep_density = adata.obs["transcript_density"].between(
-        density_low,
-        density_high,
-    )
-
-    sample = os.path.splitext(
-        os.path.basename(csv_path)
-    )[0]
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    comparison = adata.obs.copy()
-    comparison["keep_count_filter"] = keep_count
-    comparison["keep_density_filter"] = keep_density
-
-    comparison_path = os.path.join(
-        output_dir,
-        f"{sample}_filtering_comparison.csv",
-    )
-
-    comparison.to_csv(comparison_path)
-
-    print("\n--- QC FILTER COMPARISON ---")
-    print(
-        f"Count cutoffs: "
-        f"{count_low:.2f}–{count_high:.2f}"
-    )
-    print(
-        f"Density cutoffs: "
-        f"{density_low:.6f}–{density_high:.6f}"
-    )
-    print(
-        f"Objects retained by count filter: "
-        f"{int(keep_count.sum())}"
-    )
-    print(
-        f"Objects retained by density filter: "
-        f"{int(keep_density.sum())}"
-    )
-    print(f"Saved comparison: {comparison_path}")
-
-    # Apply transcript-density filtering.
-    adata = adata[keep_density].copy()
+    adata = adata[keep].copy()
 
     sc.pp.filter_genes(
         adata,
-        min_cells=5,
+        min_cells=MIN_CELLS_PER_GENE,
     )
 
-    print(
-        f"After QC: {adata.n_obs} objects, "
-        f"{adata.n_vars} genes"
-    )
+    return adata
 
-    # Preserve raw counts.
+
+def preprocess_expression(adata):
+    """Normalize expression and calculate PCA, neighbors and UMAP."""
+    # Raw counts used by fibre-type annotation.
+    adata.raw = adata.copy()
+
+    # Raw counts used for seurat_v3 HVG selection.
     adata.layers["counts"] = adata.X.copy()
 
-    # Identify HVGs from raw counts.
-    sc.pp.highly_variable_genes(
-        adata,
-        layer="counts",
-        n_top_genes=1000,
-        flavor="seurat_v3",
-        subset=False,
-    )
-
-    # Normalize and log-transform.
     sc.pp.normalize_total(
         adata,
         target_sum=10_000,
     )
+
     sc.pp.log1p(adata)
 
-    # Preserve normalized, unscaled expression.
-    adata.raw = adata.copy()
+    sc.pp.highly_variable_genes(
+        adata,
+        layer="counts",
+        n_top_genes=N_HVGS,
+        flavor="seurat_v3",
+        subset=False,
+    )
 
-    # Scale and calculate dimensionality reduction.
     sc.pp.scale(
         adata,
         max_value=10,
@@ -264,59 +278,78 @@ def preprocess_sample(
         adata,
         n_comps=40,
         use_highly_variable=True,
+        random_state=RANDOM_STATE,
     )
 
     sc.pp.neighbors(
         adata,
         n_neighbors=15,
         n_pcs=30,
+        random_state=RANDOM_STATE,
     )
 
-    sc.tl.umap(adata)
+    sc.tl.umap(
+        adata,
+        random_state=RANDOM_STATE,
+    )
 
-    output_path = os.path.join(
-        output_dir,
-        f"{sample}.h5ad",
+    return adata
+
+
+def preprocess_sample(
+    csv_path,
+    mask_path,
+    keep_genes,
+):
+    """Preprocess one matched transcript and mask pair."""
+    transcripts, mask = load_and_assign_transcripts(
+        csv_path,
+        mask_path,
+        keep_genes,
+    )
+
+    adata = create_anndata(
+        transcripts,
+        mask,
+    )
+
+    n_objects_before_qc = adata.n_obs
+
+    adata = apply_qc(adata)
+    adata = preprocess_expression(adata)
+
+    output_path = (
+        OUTPUT_DIR
+        / f"{csv_path.stem}.h5ad"
     )
 
     adata.write_h5ad(output_path)
 
-    print(f"Saved AnnData: {output_path}")
-
-
-def process_all(
-    transcript_dir="transcripts",
-    mask_dir="masks_mf",
-    output_dir="anndata_mf_density",
-):
-    """Process all matched transcript and mask files."""
-
-    pairs = get_file_pairs(
-        transcript_dir=transcript_dir,
-        mask_dir=mask_dir,
+    print(
+        f"{csv_path.stem}: "
+        f"{n_objects_before_qc} → {adata.n_obs} objects, "
+        f"{adata.n_vars} genes"
     )
+    print(f"Saved: {output_path}")
+
+
+def main():
+    keep_genes = load_genes()
+    pairs = get_file_pairs()
 
     if not pairs:
         raise FileNotFoundError(
-            "No matching transcript CSV and mask TIFF files were found."
+            "No matching transcript CSV and mask TIFF "
+            "files were found."
         )
-
-    print(
-        f"Found {len(pairs)} matched transcript/mask pairs."
-    )
 
     for csv_path, mask_path in pairs:
-        print(
-            f"\nProcessing "
-            f"{os.path.basename(csv_path)}"
-        )
-
         preprocess_sample(
-            csv_path=csv_path,
-            mask_path=mask_path,
-            output_dir=output_dir,
+            csv_path,
+            mask_path,
+            keep_genes,
         )
 
 
 if __name__ == "__main__":
-    process_all()
+    main()
