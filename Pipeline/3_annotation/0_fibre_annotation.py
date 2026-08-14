@@ -21,17 +21,11 @@ N_CLUSTERS = 4
 RANDOM_STATE = 0
 N_INIT = 50
 
-MARKERS = {
-    "type_1": ["Myh7"],
-    "type_2a": ["Myh2"],
-    "type_2x": ["Myh1"],
-    "type_2b": ["Myh4"],
-}
-
 MARKER_GENES = [
-    gene
-    for genes in MARKERS.values()
-    for gene in genes
+    "Myh7",
+    "Myh2",
+    "Myh1",
+    "Myh4",
 ]
 
 VALID_LABELS = {
@@ -89,72 +83,13 @@ def request_cluster_mapping(cluster_ids):
         while True:
             fibre_type = input(
                 f"Cluster {cluster_id} fibre type: "
-            ).strip()
+            ).strip().lower()
 
             if fibre_type in VALID_LABELS:
                 cluster_mapping[cluster_id] = fibre_type
                 break
 
             print("Invalid label.")
-
-    return cluster_mapping
-
-
-def load_or_create_mapping(mapping_path, cluster_ids):
-    """Load an existing mapping or request labels interactively."""
-    if mapping_path.exists():
-        mapping = pd.read_csv(
-            mapping_path,
-            dtype={"myh_cluster": str},
-        )
-
-        required_columns = {
-            "myh_cluster",
-            "fiber_type_from_myh",
-        }
-
-        if not required_columns.issubset(mapping.columns):
-            raise ValueError(
-                f"Invalid mapping file: {mapping_path}"
-            )
-
-        cluster_mapping = dict(
-            zip(
-                mapping["myh_cluster"],
-                mapping["fiber_type_from_myh"],
-            )
-        )
-
-        unexpected_labels = (
-            set(cluster_mapping.values())
-            - VALID_LABELS
-        )
-
-        if unexpected_labels:
-            raise ValueError(
-                f"Unexpected labels in {mapping_path}: "
-                f"{sorted(unexpected_labels)}"
-            )
-
-        if set(cluster_mapping) != set(cluster_ids):
-            raise ValueError(
-                f"Cluster IDs in {mapping_path} do not "
-                f"match the current clustering."
-            )
-
-        return cluster_mapping
-
-    cluster_mapping = request_cluster_mapping(
-        cluster_ids
-    )
-
-    pd.DataFrame(
-        cluster_mapping.items(),
-        columns=[
-            "myh_cluster",
-            "fiber_type_from_myh",
-        ],
-    ).to_csv(mapping_path, index=False)
 
     return cluster_mapping
 
@@ -206,20 +141,16 @@ def annotate_sample(h5ad_path):
         bbox_inches="tight",
     )
 
-    cluster_ids = sorted(
+    print(f"\nInspect dotplot: {dotplot_path}")
+
+    unique_clusters = sorted(
         adata.obs["myh_cluster"]
         .astype(str)
         .unique()
     )
 
-    mapping_path = (
-        RESULTS_DIR
-        / f"{sample}_cluster_mapping.csv"
-    )
-
-    cluster_mapping = load_or_create_mapping(
-        mapping_path,
-        cluster_ids,
+    cluster_mapping = request_cluster_mapping(
+        unique_clusters
     )
 
     adata.obs["fiber_type_from_myh"] = (
@@ -238,13 +169,13 @@ def annotate_sample(h5ad_path):
 
     adata.write_h5ad(output_path)
 
-    print(f"\n{sample}")
+    print(f"\n{sample} fibre-type counts:")
     print(
         adata.obs[
             "fiber_type_from_myh"
         ].value_counts()
     )
-    print(f"Saved: {output_path}")
+    print(f"Saved AnnData: {output_path}")
 
 
 def main():
