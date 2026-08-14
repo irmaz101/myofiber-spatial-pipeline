@@ -4,83 +4,193 @@ Validate transcriptomic fibre-type annotations against manual IHC labels.
 
 from pathlib import Path
 
+import anndata as ad
+import numpy as np
 import pandas as pd
-import scanpy as sc
+from sklearn.metrics import precision_recall_fscore_support
 
 
-# --------------------------------------------------
-# Settings
-# --------------------------------------------------
+MANUAL_FILE = Path("manual_annotations.xlsx")
+ANNDATA_DIR = Path("annotated_anndata")
+OUTPUT_DIR = Path("validation_results")
 
-annotation_file = Path("manual_annotations.xlsx")
-mapping_file = Path("sample_mapping.csv")
-anndata_dir = Path("annotated_anndata")
-results_dir = Path("validation_results")
+PREDICTION_COLUMN = "fiber_type_from_myh"
+VALIDATED_TYPES = ("type_2a", "type_2b")
 
-prediction_column = "fiber_type_from_myh"
-validated_labels = ["type_2a", "type_2b"]
+VALID_PREDICTIONS = {
+    "type_1",
+    "type_2a",
+    "type_2x",
+    "type_2b",
+    "other",
+}
 
-results_dir.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def clean_ids(values):
+def normalize_id(value):
     """Convert fibre identifiers to comparable strings."""
-
-    return (
-        pd.to_numeric(values, errors="coerce")
-        .astype("Int64")
-        .astype(str)
-    )
+    value = str(value).strip()
+    return value[:-2] if value.endswith(".0") else value
 
 
 def load_manual_annotations(sheet_name):
-    """Load manual type IIa and IIb labels from one Excel sheet."""
-
-    sheet = pd.read_excel(
-        annotation_file,
+    """Load and validate manual IHC annotations."""
+    manual = pd.read_excel(
+        MANUAL_FILE,
         sheet_name=sheet_name,
     )
 
-    annotations = pd.DataFrame({
-        "cell_id": clean_ids(sheet.iloc[:, 0]),
-        "type_2a": sheet["2a"],
-        "type_2b": sheet["2b"],
+    manual = manual.rename(
+        columns={manual.columns[0]: "cell_id"}
+    )
+
+    required_columns = {"cell_id", "2a", "2b"}
+    missing_columns = required_columns.difference(manual.columns)
+
+    if missing_columns:
+        raise ValueError(
+            f"Missing columns in sheet {sheet_name}: "
+            f"{sorted(missing_columns)}"
+        )
+
+    manual = manual.dropna(subset=["cell_id"]).copy()
+    manual["cell_id"] = manual["cell_id"].map(normalize_id)
+
+    manual["2a"] = pd.to_numeric(
+        manual["2a"],
+        errors="coerce",
+    ).fillna(0)
+
+    manual["2b"] = pd.to_numeric(
+        manual["2b"],
+        errors="coerce",
+    ).fillna(0)
+
+    for column in ["2a", "2b"]:
+        invalid_values = set(manual[column].unique()) - {0, 1}
+
+        if invalid_values:
+            raise ValueError(
+                f"Invalid values in column {column}, "
+                f"sheet {sheet_name}: {sorted(invalid_values)}"
+            )
+
+    duplicate_ids = manual.loc[
+        manual["cell_id"].duplicated(keep=False),
+        "cell_id",
+    ].unique()
+
+    if len(duplicate_ids):
+        raise ValueError(
+            f"Duplicate IDs in sheet {sheet_name}: "
+            f"{duplicate_ids.tolist()}"
+        )
+
+    double_positive = (
+        manual["2a"].eq(1)
+        & manual["2b"].eq(1)
+    )
+
+    if double_positive.any():
+        ids = manual.loc[
+            double_positive,
+            "cell_id",
+        ].tolist()
+
+        raise ValueError(
+            f"Fibres labelled as both IIa and IIb "
+            f"in sheet {sheet_name}: {ids}"
+        )
+
+    manual["reference"] = np.select(
+        [
+            manual["2a"].eq(1),
+            manual["2b"].eq(1),
+        ],
+        [
+            "type_2a",
+            "type_2b",
+        ],
+        default="double_negative",
+    )
+
+    return manual[["cell_id", "reference"]]
+
+
+def load_predictions(h5ad_path):
+    """Load transcriptomic fibre-type predictions."""
+    if not h5ad_path.exists():
+        raise FileNotFoundError(
+            f"Missing AnnData file: {h5ad_path}"
+        )
+
+    adata = ad.read_h5ad(h5ad_path)
+
+    if PREDICTION_COLUMN not in adata.obs.columns:
+        raise KeyError(
+            f"Column '{PREDICTION_COLUMN}' not found "
+            f"in {h5ad_path.name}"
+        )
+
+    predictions = pd.DataFrame({
+        "cell_id": [
+            normalize_id(value)
+            for value in adata.obs_names
+        ],
+        "prediction": (
+            adata.obs[PREDICTION_COLUMN]
+            .astype(str)
+            .str.strip()
+            .to_numpy()
+        ),
     })
 
-    annotations["manual_label"] = pd.NA
-    annotations.loc[
-        annotations["type_2a"] == 1,
-        "manual_label",
-    ] = "type_2a"
-    annotations.loc[
-        annotations["type_2b"] == 1,
-        "manual_label",
-    ] = "type_2b"
+    unexpected_labels = (
+        set(predictions["prediction"].unique())
+        - VALID_PREDICTIONS
+    )
 
-    return annotations[
-        annotations["manual_label"].notna()
-    ].copy()
+    if unexpected_labels:
+        raise ValueError(
+            f"Unexpected fibre-type labels in "
+            f"{h5ad_path.name}: "
+            f"{sorted(unexpected_labels)}"
+        )
+
+    duplicate_ids = predictions.loc[
+        predictions["cell_id"].duplicated(keep=False),
+        "cell_id",
+    ].unique()
+
+    if len(duplicate_ids):
+        raise ValueError(
+            f"Duplicate IDs in {h5ad_path.name}: "
+            f"{duplicate_ids.tolist()}"
+        )
+
+    return predictions
 
 
-def calculate_metrics(reference, prediction, label):
-    """Calculate one-vs-rest precision, recall and F1."""
+def calculate_metrics(reference, prediction, fibre_type):
+    """Calculate one-vs-rest metrics."""
+    y_true = reference.eq(fibre_type)
+    y_pred = prediction.eq(fibre_type)
 
-    tp = ((reference == label) & (prediction == label)).sum()
-    fp = ((reference != label) & (prediction == label)).sum()
-    fn = ((reference == label) & (prediction != label)).sum()
-
-    precision = tp / (tp + fp) if tp + fp else 0
-    recall = tp / (tp + fn) if tp + fn else 0
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if precision + recall
-        else 0
+    precision, recall, f1, _ = (
+        precision_recall_fscore_support(
+            y_true,
+            y_pred,
+            average="binary",
+            zero_division=0,
+        )
     )
 
     return {
-        "tp": int(tp),
-        "fp": int(fp),
-        "fn": int(fn),
+        "reference_n": int(y_true.sum()),
+        "TP": int((y_true & y_pred).sum()),
+        "FP": int((~y_true & y_pred).sum()),
+        "FN": int((y_true & ~y_pred).sum()),
         "precision": precision,
         "recall": recall,
         "f1": f1,
@@ -88,141 +198,162 @@ def calculate_metrics(reference, prediction, label):
 
 
 def main():
-    mapping = pd.read_csv(mapping_file)
+    sample_names = pd.ExcelFile(
+        MANUAL_FILE
+    ).sheet_names
 
-    required_columns = {"excel_sheet", "anndata_file"}
-    missing = required_columns.difference(mapping.columns)
-
-    if missing:
-        raise ValueError(
-            f"Mapping file is missing columns: {sorted(missing)}"
-        )
-
-    sample_results = []
+    per_sample_results = []
     matched_tables = []
-    missing_tables = []
 
-    for row in mapping.itertuples(index=False):
-        sample = row.excel_sheet
-        h5ad_path = anndata_dir / row.anndata_file
-
-        print(f"Processing {sample}")
+    for sample in sample_names:
+        h5ad_path = (
+            ANNDATA_DIR
+            / f"{sample}_with_myh_fiber_types.h5ad"
+        )
 
         manual = load_manual_annotations(sample)
-        adata = sc.read_h5ad(h5ad_path)
+        predictions = load_predictions(h5ad_path)
 
-        if prediction_column not in adata.obs:
-            raise KeyError(
-                f"{prediction_column} not found in {h5ad_path.name}"
-            )
-
-        adata.obs_names = clean_ids(adata.obs_names)
-
-        predictions = (
-            adata.obs[prediction_column]
-            .astype(str)
-            .str.strip()
-            .str.lower()
-            .to_dict()
+        matched = manual.merge(
+            predictions,
+            on="cell_id",
+            how="inner",
+            validate="one_to_one",
         )
 
-        manual["auto_label"] = manual["cell_id"].map(predictions)
-
-        matched = manual[manual["auto_label"].notna()].copy()
-        missing_fibres = manual[manual["auto_label"].isna()].copy()
-
-        matched["sample"] = sample
-        missing_fibres["sample"] = sample
-
-        matched_tables.append(matched)
-        missing_tables.append(missing_fibres)
-
-        result = {
-            "sample": sample,
-            "n_manual": len(manual),
-            "n_matched": len(matched),
-            "n_missing": len(missing_fibres),
-            "percent_matched": (
-                100 * len(matched) / len(manual)
-                if len(manual)
-                else 0
-            ),
-        }
-
-        for label in validated_labels:
-            metrics = calculate_metrics(
-                matched["manual_label"],
-                matched["auto_label"],
-                label,
+        if matched.empty:
+            raise ValueError(
+                f"No matching fibre IDs found for "
+                f"sample {sample}."
             )
 
-            for metric, value in metrics.items():
-                result[f"{label}_{metric}"] = value
+        matched["sample"] = sample
+        matched_tables.append(matched)
 
-        result["macro_f1"] = sum(
-            result[f"{label}_f1"]
-            for label in validated_labels
-        ) / len(validated_labels)
+        sample_f1 = []
 
-        sample_results.append(result)
+        # Double-negative fibres are negative observations
+        # in both one-vs-rest evaluations.
+        for fibre_type in VALIDATED_TYPES:
+            metrics = calculate_metrics(
+                matched["reference"],
+                matched["prediction"],
+                fibre_type,
+            )
 
-    results = pd.DataFrame(sample_results)
+            per_sample_results.append({
+                "sample": sample,
+                "fibre_type": fibre_type,
+                **metrics,
+            })
 
-    results.to_csv(
-        results_dir / "fibre_annotation_metrics_per_sample.csv",
-        index=False,
-    )
+            sample_f1.append(metrics["f1"])
 
-    pd.concat(
+        macro_f1 = np.mean(sample_f1)
+
+        for result in per_sample_results[
+            -len(VALIDATED_TYPES):
+        ]:
+            result["sample_macro_f1"] = macro_f1
+
+    per_sample = pd.DataFrame(per_sample_results)
+    matched_all = pd.concat(
         matched_tables,
         ignore_index=True,
-    ).to_csv(
-        results_dir / "matched_fibres.csv",
+    )
+
+    class_summary = (
+        per_sample
+        .groupby("fibre_type")
+        .agg(
+            reference_n=("reference_n", "sum"),
+            precision_mean=("precision", "mean"),
+            precision_sd=("precision", "std"),
+            recall_mean=("recall", "mean"),
+            recall_sd=("recall", "std"),
+            f1_mean=("f1", "mean"),
+            f1_sd=("f1", "std"),
+        )
+        .reset_index()
+    )
+
+    macro_per_sample = (
+        per_sample[
+            ["sample", "sample_macro_f1"]
+        ]
+        .drop_duplicates()
+        .sort_values("sample")
+    )
+
+    macro_summary = pd.DataFrame({
+        "n_samples": [len(macro_per_sample)],
+        "macro_f1_mean": [
+            macro_per_sample[
+                "sample_macro_f1"
+            ].mean()
+        ],
+        "macro_f1_sd": [
+            macro_per_sample[
+                "sample_macro_f1"
+            ].std(ddof=1)
+        ],
+    })
+
+    confusion = pd.crosstab(
+        matched_all["reference"],
+        matched_all["prediction"],
+        margins=True,
+    )
+
+    reference_counts = (
+        matched_all
+        .groupby(["sample", "reference"])
+        .size()
+        .unstack(fill_value=0)
+        .reset_index()
+    )
+
+    per_sample.to_csv(
+        OUTPUT_DIR / "metrics_per_sample.csv",
         index=False,
     )
 
-    pd.concat(
-        missing_tables,
-        ignore_index=True,
-    ).to_csv(
-        results_dir / "missing_fibres.csv",
+    class_summary.to_csv(
+        OUTPUT_DIR / "metrics_summary.csv",
         index=False,
     )
 
-    summary_rows = []
-
-    for label in validated_labels:
-        summary_rows.append({
-            "label": label,
-            "precision_mean": results[f"{label}_precision"].mean(),
-            "precision_sd": results[f"{label}_precision"].std(),
-            "recall_mean": results[f"{label}_recall"].mean(),
-            "recall_sd": results[f"{label}_recall"].std(),
-            "f1_mean": results[f"{label}_f1"].mean(),
-            "f1_sd": results[f"{label}_f1"].std(),
-            "tp_total": results[f"{label}_tp"].sum(),
-            "fp_total": results[f"{label}_fp"].sum(),
-            "fn_total": results[f"{label}_fn"].sum(),
-        })
-
-    summary = pd.DataFrame(summary_rows)
-
-    summary.to_csv(
-        results_dir / "fibre_annotation_metrics_summary.csv",
+    macro_per_sample.to_csv(
+        OUTPUT_DIR / "macro_f1_per_sample.csv",
         index=False,
     )
 
-    pd.DataFrame([{
-        "validated_classes": ",".join(validated_labels),
-        "macro_f1_mean": results["macro_f1"].mean(),
-        "macro_f1_sd": results["macro_f1"].std(),
-    }]).to_csv(
-        results_dir / "fibre_annotation_macro_f1.csv",
+    macro_summary.to_csv(
+        OUTPUT_DIR / "macro_f1_summary.csv",
         index=False,
     )
 
-    print(results)
-    print(summary)
+    confusion.to_csv(
+        OUTPUT_DIR / "confusion_matrix.csv",
+    )
+
+    reference_counts.to_csv(
+        OUTPUT_DIR / "reference_counts_per_sample.csv",
+        index=False,
+    )
+
+    matched_all.to_csv(
+        OUTPUT_DIR / "matched_fibres.csv",
+        index=False,
+    )
+
+    print(class_summary.round(4).to_string(index=False))
+    print()
+    print(macro_summary.round(4).to_string(index=False))
+    print(
+        f"\nResults saved to: "
+        f"{OUTPUT_DIR.resolve()}"
+    )
 
 
 if __name__ == "__main__":
