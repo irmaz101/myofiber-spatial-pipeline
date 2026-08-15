@@ -1,0 +1,10 @@
+# Tested with Python 3.10 and Cellpose 4.0.4.
+# Install the PyTorch build appropriate for your CPU/CUDA platform first:
+# https://pytorch.org/get-started/locally/
+
+cellpose==4.0.4
+napari==0.6.4
+numpy==2.2.6
+scikit-image==0.25.2
+tifffile==2025.5.10
+torch==2.5.1
