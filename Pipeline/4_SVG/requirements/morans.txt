@@ -1,11 +1,9 @@
-# Tested with Python 3.9.
+# Tested with Python 3.10.19.
 
-anndata==0.8.0
-matplotlib==3.5.2
-numpy==1.21.5
-pandas==1.4.2
-scanpy==1.9.1
-scikit-learn==1.0.2
-scipy==1.8.0
-somde==0.1.8
-statsmodels==0.14.1
+anndata==0.11.4
+matplotlib==3.10.8
+numpy==2.2.6
+pandas==2.3.3
+scanpy==1.11.5
+scipy==1.15.3
+squidpy==1.6.5
