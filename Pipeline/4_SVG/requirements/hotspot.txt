@@ -1,9 +1,7 @@
 # Tested with Python 3.10.
-# Install/clone SMASH separately as described in the SVG README.
-
 anndata==0.11.4
+hotspotsc==1.1.3
 numpy==2.2.6
 pandas==2.3.3
 scanpy==1.11.5
 scipy==1.15.3
-statsmodels==0.14.6
