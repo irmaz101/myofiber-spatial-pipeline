@@ -1,0 +1,9 @@
+# The exact versions used for SVGbit were not recorded. These dependencies are
+# intentionally left unpinned rather than assigning unverified versions.
+
+anndata
+numpy
+pandas
+scanpy
+scipy
+svgbit
