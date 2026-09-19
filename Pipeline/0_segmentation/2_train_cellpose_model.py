@@ -1,19 +1,10 @@
-"""
-Train a custom Cellpose model from manually annotated image patches.
-
-The script matches each training patch with its corresponding label mask,
-loads the image-label pairs, fine-tunes the default Cellpose-SAM model,
-and saves the trained model weights.
-"""
+"""Fine-tune Cellpose-SAM on matching image patches and manual masks."""
 
 from pathlib import Path
 
 from cellpose import io, models, train
 
-
-# --------------------------------------------------
 # Settings
-# --------------------------------------------------
 
 patch_dir = Path("training_patches")
 label_dir = Path("training_labels")
@@ -25,9 +16,7 @@ model_name = f"cellpose_{n_epochs}epochs"
 model_dir.mkdir(parents=True, exist_ok=True)
 
 
-# --------------------------------------------------
 # Load training data
-# --------------------------------------------------
 
 patches = []
 labels = []
@@ -41,8 +30,7 @@ for label_path in sorted(label_dir.glob("*_label.png")):
 
     if not patch_path.exists():
         raise FileNotFoundError(
-            f"No matching image patch found for {label_path.name}: "
-            f"{patch_path}"
+            f"No matching image patch found for {label_path.name}: " f"{patch_path}"
         )
 
     patch = io.imread(patch_path)
@@ -62,9 +50,7 @@ if not patches:
 print(f"Loaded {len(patches)} image-label pairs.")
 
 
-# --------------------------------------------------
 # Initialize and train Cellpose
-# --------------------------------------------------
 
 model = models.CellposeModel(gpu=True)
 
