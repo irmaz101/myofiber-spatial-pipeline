@@ -1,48 +1,21 @@
 # Spatially variable gene detection
 
-This folder contains the wrappers used to run eight spatially variable gene
-(SVG) methods on sample-level myofibre AnnData objects. The statistical methods
-are provided by the original packages; these scripts only prepare the input,
-set the study parameters and save the selected genes.
+Eight SVG methods are run separately on each preprocessed myofibre AnnData
+file. Each wrapper prepares the method input and saves its gene-level results.
 
-## Input
+## Inputs and environments
 
-Each script processes one `.h5ad` file. The AnnData object must contain:
+Use the files from [preprocessing](../1_preprocessing/README.md). Required
+fields are:
 
-- raw counts in `adata.raw` for Moran's I, Hotspot, SMASH, SpaGFT and SVGbit;
-- raw counts in `adata.layers["counts"]` for SpatialDE, scGCO and SOMDE;
-- `x_centroid` and `y_centroid` in `adata.obs`.
+| Field | Used by |
+| --- | --- |
+| `adata.raw` with raw counts | Moran's I, Hotspot, SMASH, SpaGFT, SVGbit |
+| `adata.layers["counts"]` | SpatialDE, scGCO, SOMDE |
+| `obs["x_centroid"]`, `obs["y_centroid"]` | All methods |
 
-These fields are created by `Pipeline/1_preprocessing/preprocessing.py`.
-
-## Methods and parameters
-
-| Method | Expression | Parameters | SVG selection |
-| --- | --- | --- | --- |
-| Moran's I | Raw counts from `adata.raw`, normalized to 10,000 and log1p-transformed | Squidpy; 6 spatial neighbours | BH-FDR < 0.05 |
-| SpatialDE | Raw counts | NaiveDE stabilization; regression of `log(total_counts)` | q-value < 0.05 |
-| Hotspot | Raw counts from `adata.raw` | Bernoulli model; 20 unweighted neighbours | FDR < 0.05 |
-| scGCO | Raw counts | Cell Ranger normalization; genes detected in at least 2 objects | FDR < 0.05 |
-| SOMDE | Raw counts | SOM grid size = 10 | q-value < 0.05 |
-| SMASH | Raw counts from `adata.raw`, normalized to 10,000 and log1p-transformed | All covariance kernels; `mean_only=False`; `forcePD=False` | BY-adjusted P <= 0.05 |
-| SpaGFT | Raw counts from `adata.raw`, normalized to 10,000 and log1p-transformed | `ratio_neighbors=1`; `filter_peaks=True`; `S=6` | SpaGFT score cutoff and FDR <= 0.05 |
-| SVGbit | Raw counts from `adata.raw`, transformed with SVGbit's log-CPM normalizer | Variance filter = 0; no upper-expression quantile filter; 6 neighbours | Top 1,000 genes by AI score |
-
-The required `--output` CSV contains only genes meeting the stated selection
-rule. This is the file used by the benchmarking scripts, which treat each row
-as one detected SVG.
-
-An optional `--all-output` CSV can also be saved. It contains every gene
-returned by the method and an `is_svg` column indicating whether the gene met
-the selection rule.
-
-## Installation
-
-The methods have incompatible dependency requirements and should be installed
-in separate conda environments. Requirements files and tested Python versions
-are available under `Pipeline/4_SVG/requirements/`.
-
-For example:
+Create a separate environment per method, using the Python version noted in
+its requirements file. For example:
 
 ```bash
 conda create -n myofiber-morans python=3.10
@@ -50,16 +23,31 @@ conda activate myofiber-morans
 python -m pip install -r Pipeline/4_SVG/requirements/morans.txt
 ```
 
-Replace `morans` with the required method and use the Python version stated
-at the top of that requirements file. scGCO and SMASH additionally require
-local source checkouts supplied through `--source`; obtain these from their
-linked original repositories.
+Requirements filenames follow the method names (`hotspot.txt`, `somde.txt`,
+etc.), even where the wrapper has a `run_` prefix. SVGbit dependencies are
+unpinned because the exact study versions were not recorded.
 
-## Running a method
+scGCO and SMASH also need local source directories, supplied with `--source`.
+The scGCO wrapper expects `scGCO_simple.py` (default directory: `scgco_utils/`);
+that helper is not included here. SMASH defaults to `SMASH/SMASH/`.
 
-All scripts use the same required input and output arguments and support the
-optional `--all-output` argument. Method-specific parameters can be inspected
-with `python SCRIPT.py --help`. For example:
+## Method settings
+
+| Method | Wrapper | Expression and parameters | SVG selection |
+| --- | --- | --- | --- |
+| [Moran's I / Squidpy](https://github.com/scverse/squidpy) | `morans.py` | Counts normalized to 10,000 and log1p-transformed; 6 spatial neighbours | BH-FDR < 0.05 |
+| [SpatialDE](https://github.com/teichlab/spatialde) | `spatial_de.py` | Raw counts; NaiveDE stabilization and regression of `log(total_counts)` | q-value < 0.05 |
+| [Hotspot](https://github.com/YosefLab/Hotspot) | `run_hotspot.py` | Raw counts; Bernoulli model; 20 unweighted neighbours | FDR < 0.05 |
+| [scGCO](https://github.com/WangPeng-Lab/scGCO) | `scgco.py` | Raw counts; Cell Ranger normalization; detection in at least 2 objects | FDR < 0.05 |
+| [SOMDE](https://github.com/WhirlFirst/somde) | `run_somde.py` | Raw counts; `k = 10` | q-value < 0.05 |
+| [SMASH](https://github.com/sealx017/SMASH-) | `smash.py` | Counts normalized to 10,000 and log1p-transformed; all covariance kernels; `mean_only=False`; `forcePD=False` | BY-adjusted P ≤ 0.05 |
+| [SpaGFT](https://github.com/jxLiu-bio/SpaGFT) | `spagft.py` | Counts normalized to 10,000 and log1p-transformed; `ratio_neighbors=1`; `filter_peaks=True`; `S=6` | Score cutoff and FDR ≤ 0.05 |
+| [SVGbit](https://github.com/CPenglab/svgbit) | `run_svgbit.py` | Raw counts with log-CPM normalization; variance filter = 0; no upper-expression quantile filter; 6 neighbours | Top 1,000 genes by AI score |
+
+## Run a method
+
+Every wrapper accepts `--input`, `--output` and optional `--all-output`.
+Use `--help` for method-specific arguments. From the repository root:
 
 ```bash
 python Pipeline/4_SVG/morans.py \
@@ -68,52 +56,23 @@ python Pipeline/4_SVG/morans.py \
     --all-output results_all/moran_i/sample_01.csv
 ```
 
-Omit `--all-output` if only the selected SVG table is needed.
-
-Equivalent commands can be used for the other methods:
+Substitute the wrapper and output directory for another method, for example:
 
 ```bash
-python Pipeline/4_SVG/spatial_de.py -i INPUT.h5ad -o OUTPUT.csv
-python Pipeline/4_SVG/hotspot.py    -i INPUT.h5ad -o OUTPUT.csv
-python Pipeline/4_SVG/scgco.py      -i INPUT.h5ad -o OUTPUT.csv
-python Pipeline/4_SVG/somde.py      -i INPUT.h5ad -o OUTPUT.csv
-python Pipeline/4_SVG/smash.py      -i INPUT.h5ad -o OUTPUT.csv
-python Pipeline/4_SVG/spagft.py     -i INPUT.h5ad -o OUTPUT.csv
-python Pipeline/4_SVG/svgbit.py     -i INPUT.h5ad -o OUTPUT.csv
+python Pipeline/4_SVG/run_hotspot.py \
+    --input anndata_mf_density/sample_01.h5ad \
+    --output results/hotspot/sample_01.csv \
+    --all-output results_all/hotspot/sample_01.csv
 ```
 
-Use one output directory per method, with identical sample basenames:
+## Result files
 
-```text
-results/
-├── hotspot/sample_01.csv
-├── moran_i/sample_01.csv
-├── scgco/sample_01.csv
-├── smash/sample_01.csv
-├── somde/sample_01.csv
-├── spagft/sample_01.csv
-├── spatialde/sample_01.csv
-└── svgbit/sample_01.csv
-```
+| Argument | Contents | Benchmark use |
+| --- | --- | --- |
+| `--output` | Genes meeting the method's selection rule | SVG counts, method overlap and technical-replicate overlap |
+| `--all-output` | Every returned gene, its statistics and an `is_svg` flag | Synthetic Kendall and AUPRC benchmarks |
 
-The same layout can be used under `results_all/` for the optional complete
-gene-level tables. Use files under `results/`, not `results_all/`, as input to
-the SVG benchmarking scripts.
-
-scGCO and SMASH use local source directories by default. Alternative locations
-can be supplied with `--source`.
-
-## Software
-
-- [Squidpy](https://github.com/scverse/squidpy)
-- [SpatialDE](https://github.com/teichlab/spatialde)
-- [Hotspot](https://github.com/YosefLab/Hotspot)
-- [scGCO](https://github.com/WangPeng-Lab/scGCO)
-- [SOMDE](https://github.com/WhirlFirst/somde)
-- [SMASH](https://github.com/sealx017/SMASH-)
-- [SpaGFT](https://github.com/jxLiu-bio/SpaGFT)
-- [SVGbit](https://github.com/CPenglab/svgbit)
-
-The method-specific requirements files record the tested package versions.
-The original method publications and software repositories should also be
-cited.
+Use identical sample basenames across methods. The benchmark scripts expect
+method directories named `hotspot`, `moran_i`, `scgco`, `smash`, `somde`,
+`spagft`, `spatialde` and `svgbit`. Keep selected-gene results and complete
+results in separate parent directories, as in the examples above.
