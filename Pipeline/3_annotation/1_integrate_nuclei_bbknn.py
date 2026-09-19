@@ -1,10 +1,6 @@
-"""
-Integrate nucleus-level AnnData objects using BBKNN.
+"""Integrate nuclear count matrices with BBKNN, then run UMAP and Leiden.
 
-The script combines sample-level nucleus datasets, identifies highly
-variable genes, performs PCA, constructs a BBKNN graph, runs UMAP and
-Leiden clustering, and saves the integrated AnnData object.
-"""
+Inputs must contain unnormalized counts in .X."""
 
 from pathlib import Path
 
@@ -13,10 +9,7 @@ import bbknn
 import pandas as pd
 import scanpy as sc
 
-
-# --------------------------------------------------
 # Settings
-# --------------------------------------------------
 
 anndata_dir = Path("nuclei_anndata")
 results_dir = Path("results")
@@ -35,9 +28,8 @@ sc.settings.figdir = results_dir
 sc.settings.autoshow = False
 
 
-# --------------------------------------------------
 # Load and combine samples
-# --------------------------------------------------
+
 
 def load_and_combine():
     """Load all sample-level AnnData files and combine them."""
@@ -58,31 +50,19 @@ def load_and_combine():
 
         adata = sc.read_h5ad(h5ad_path)
         adata.obs["sample"] = sample
-        adata.obs_names = [
-            f"{sample}_{object_id}"
-            for object_id in adata.obs_names
-        ]
+        adata.obs_names = [f"{sample}_{object_id}" for object_id in adata.obs_names]
 
         adata_list.append(adata)
 
-    combined = ad.concat(
-        adata_list,
-        join="outer",
-        merge="same",
-        index_unique=None,
-    )
+    combined = ad.concat(adata_list, join="outer", merge="same", index_unique=None)
 
-    print(
-        f"Combined dataset: {combined.n_obs} nuclei × "
-        f"{combined.n_vars} genes"
-    )
+    print(f"Combined dataset: {combined.n_obs} nuclei × " f"{combined.n_vars} genes")
 
     return combined
 
 
-# --------------------------------------------------
 # BBKNN integration and clustering
-# --------------------------------------------------
+
 
 def integrate_nuclei(adata):
     """Normalize, integrate and cluster the combined nucleus dataset."""
@@ -90,7 +70,7 @@ def integrate_nuclei(adata):
     # Preserve raw counts.
     adata.layers["counts"] = adata.X.copy()
 
-    # Identify HVGs from raw counts while accounting for sample.
+    # Select HVGs from counts, accounting for sample.
     sc.pp.highly_variable_genes(
         adata,
         layer="counts",
@@ -100,36 +80,19 @@ def integrate_nuclei(adata):
         subset=False,
     )
 
-    print(
-        f"HVGs detected: "
-        f"{int(adata.var['highly_variable'].sum())}"
-    )
+    print(f"HVGs detected: " f"{int(adata.var['highly_variable'].sum())}")
 
-    # Normalize and log-transform the complete expression matrix.
-    sc.pp.normalize_total(
-        adata,
-        target_sum=target_sum,
-    )
+    sc.pp.normalize_total(adata, target_sum=target_sum)
     sc.pp.log1p(adata)
 
-    # Preserve the normalized full expression matrix.
+    # Retain all genes in .raw for marker and signature scoring.
     adata.raw = adata.copy()
 
     # Use HVGs for dimensionality reduction and integration.
-    adata_hvg = adata[
-        :,
-        adata.var["highly_variable"],
-    ].copy()
+    adata_hvg = adata[:, adata.var["highly_variable"]].copy()
 
-    sc.pp.scale(
-        adata_hvg,
-        max_value=10,
-    )
-    sc.tl.pca(
-        adata_hvg,
-        n_comps=n_pcs,
-        random_state=random_state,
-    )
+    sc.pp.scale(adata_hvg, max_value=10)
+    sc.tl.pca(adata_hvg, n_comps=n_pcs, random_state=random_state)
 
     bbknn.bbknn(
         adata_hvg,
@@ -139,10 +102,7 @@ def integrate_nuclei(adata):
         n_pcs=n_pcs,
     )
 
-    sc.tl.umap(
-        adata_hvg,
-        random_state=random_state,
-    )
+    sc.tl.umap(adata_hvg, random_state=random_state)
 
     sc.tl.leiden(
         adata_hvg,
@@ -151,12 +111,9 @@ def integrate_nuclei(adata):
         random_state=random_state,
     )
 
-    print(
-        f"Leiden clusters: "
-        f"{adata_hvg.obs[cluster_key].nunique()}"
-    )
+    print(f"Leiden clusters: " f"{adata_hvg.obs[cluster_key].nunique()}")
 
-    # Copy the integrated representation to the full-gene object.
+    # Keep the integrated graph and embeddings with the full gene matrix.
     adata.obsm["X_pca"] = adata_hvg.obsm["X_pca"].copy()
     adata.obsm["X_umap_bbknn"] = adata_hvg.obsm["X_umap"].copy()
     adata.obsp["connectivities"] = adata_hvg.obsp["connectivities"].copy()
@@ -168,22 +125,12 @@ def integrate_nuclei(adata):
     return adata
 
 
-# --------------------------------------------------
-# Save results
-# --------------------------------------------------
-
 def save_results(adata):
     """Save the integrated object, cluster counts and UMAP plots."""
 
-    cluster_counts = pd.crosstab(
-        adata.obs[cluster_key],
-        adata.obs["sample"],
-    )
+    cluster_counts = pd.crosstab(adata.obs[cluster_key], adata.obs["sample"])
 
-    counts_path = (
-        results_dir /
-        "cluster_counts_by_sample.csv"
-    )
+    counts_path = results_dir / "cluster_counts_by_sample.csv"
     cluster_counts.to_csv(counts_path)
 
     sc.pl.embedding(
@@ -206,10 +153,7 @@ def save_results(adata):
         save="_bbknn_samples.png",
     )
 
-    output_path = (
-        results_dir /
-        "combined_nuclei_bbknn.h5ad"
-    )
+    output_path = results_dir / "combined_nuclei_bbknn.h5ad"
     adata.write_h5ad(output_path)
 
     print(f"Saved integrated AnnData: {output_path}")
@@ -217,8 +161,6 @@ def save_results(adata):
 
 
 def main():
-    """Run the complete nucleus integration workflow."""
-
     adata = load_and_combine()
     adata = integrate_nuclei(adata)
     save_results(adata)
