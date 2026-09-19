@@ -1,11 +1,4 @@
-"""
-Annotate Cellpose training patches in Napari.
-
-The script loads previously extracted image patches, allows manual
-segmentation in Napari, and saves the resulting label masks. It can
-also display patch locations on the original morphology image for
-quality control.
-"""
+"""Annotate training patches in Napari, or inspect their image locations."""
 
 from collections import defaultdict
 from pathlib import Path
@@ -43,12 +36,14 @@ def parse_patch_name(filepath):
     xcoords = [int(x) for x in xcoord]
     ycoords = [int(y) for y in ycoord]
 
-    square = np.array([
-        [ycoords[0], xcoords[0]],
-        [ycoords[1], xcoords[0]],
-        [ycoords[1], xcoords[1]],
-        [ycoords[0], xcoords[1]],
-    ])
+    square = np.array(
+        [
+            [ycoords[0], xcoords[0]],
+            [ycoords[1], xcoords[0]],
+            [ycoords[1], xcoords[1]],
+            [ycoords[0], xcoords[1]],
+        ]
+    )
 
     return sample_name, square
 
@@ -79,10 +74,7 @@ def annotate_patch(patch_path, label_path):
     label = load_patch(label_path)
 
     if label is None:
-        label = np.zeros(
-            patch.shape[:2],
-            dtype=np.uint16
-        )
+        label = np.zeros(patch.shape[:2], dtype=np.uint16)
 
     viewer = napari.Viewer()
 
@@ -96,11 +88,7 @@ def annotate_patch(patch_path, label_path):
 
     napari.run()
 
-    imsave(
-        label_path,
-        labels.data,
-        check_contrast=False
-    )
+    imsave(label_path, labels.data, check_contrast=False)
 
 
 if __name__ == "__main__":
@@ -125,10 +113,7 @@ if __name__ == "__main__":
 
         for patch_path in patch_paths:
 
-            annotate_patch(
-                patch_path,
-                label_dir / f"{patch_path.stem}_label.png",
-            )
+            annotate_patch(patch_path, label_dir / f"{patch_path.stem}_label.png")
 
     else:
 
@@ -141,7 +126,5 @@ if __name__ == "__main__":
         for sample_name, squares in squares_by_sample.items():
 
             show_patch_locations(
-                imread(image_dir / f"{sample_name}.tif"),
-                squares,
-                sample_name,
+                imread(image_dir / f"{sample_name}.tif"), squares, sample_name
             )
