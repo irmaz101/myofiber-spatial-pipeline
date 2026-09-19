@@ -111,6 +111,16 @@ Nucleus-level annotation consists of five separately executed steps:
 
 ### Step 1: nucleus-level QC
 
+Nuclear count matrices can be constructed using the same transcript-to-mask
+assignment and count-matrix construction steps as for myofibres, with
+nuclear masks as input. For this workflow, save the unfiltered nuclear
+AnnData objects in `nuclei_anndata_unfiltered/` with raw transcript counts
+in `adata.X`, before applying object-level QC, gene filtering, normalization
+or scaling. Nuclear QC uses total transcript counts, whereas myofibre QC
+uses transcript density (counts divided by object area). After nuclear QC,
+retain raw counts in `adata.X`; normalization and log transformation are
+performed later by `1_integrate_nuclei_bbknn.py`.
+
 `1_nuclei_qc.py` reads unfiltered count matrices from
 `nuclei_anndata_unfiltered/`. Within each sample, it retains nuclei between the
 5th and 95th percentiles of `total_counts`, removes genes detected in fewer
@@ -120,6 +130,7 @@ than five retained nuclei, and writes `*.filtered.h5ad` files plus
 ```bash
 python Pipeline/3_annotation/1_nuclei_qc.py
 ```
+
 
 ### Step 2: BBKNN integration and clustering
 
