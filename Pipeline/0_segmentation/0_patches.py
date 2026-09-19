@@ -1,9 +1,4 @@
-"""
-Extract random training patches from Xenium morphology images.
-
-For each input image, the script extracts a specified number of random
-1800 × 1800 pixel patches for manual annotation and Cellpose training.
-"""
+"""Extract random 1800 × 1800 image patches for Cellpose training."""
 
 from pathlib import Path
 from random import randint, seed
@@ -27,21 +22,11 @@ def generate_random_patch(image, patch_size):
     y = randint(0, height - patch_size)
 
     if image.ndim == 3:
-        patch = image[
-            y:y + patch_size,
-            x:x + patch_size,
-            :
-        ]
+        patch = image[y : y + patch_size, x : x + patch_size, :]
     else:
-        patch = image[
-            y:y + patch_size,
-            x:x + patch_size
-        ]
+        patch = image[y : y + patch_size, x : x + patch_size]
 
-    idx_string = (
-        f"-x{x}_{x + patch_size}"
-        f"-y{y}_{y + patch_size}"
-    )
+    idx_string = f"-x{x}_{x + patch_size}" f"-y{y}_{y + patch_size}"
 
     return patch, idx_string
 
@@ -56,11 +41,7 @@ def create_random_patch(image_path, patch_size):
 def save_patch(patch, sample_name, output_dir, idx_string):
     """Save a patch."""
 
-    imsave(
-        output_dir / f"{sample_name}{idx_string}.tif",
-        patch,
-        check_contrast=False
-    )
+    imsave(output_dir / f"{sample_name}{idx_string}.tif", patch, check_contrast=False)
 
 
 if __name__ == "__main__":
@@ -81,14 +62,6 @@ if __name__ == "__main__":
 
         for _ in range(patches_per_image):
 
-            patch, idx_string = create_random_patch(
-                image_path,
-                patch_size
-            )
+            patch, idx_string = create_random_patch(image_path, patch_size)
 
-            save_patch(
-                patch,
-                sample_name,
-                output_dir,
-                idx_string
-            )
+            save_patch(patch, sample_name, output_dir, idx_string)
